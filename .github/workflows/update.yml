@@ -1,0 +1,39 @@
+name: Update market data
+# Weekday evenings after the US close (22:15 UTC = 22:15 Dublin in winter, 23:15 in summer),
+# whenever the script or this workflow changes, and on demand from the Actions tab.
+on:
+  schedule:
+    - cron: '15 22 * * 1-5'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['market_fetch.py', '.github/workflows/update.yml']
+permissions:
+  contents: write
+concurrency:
+  group: market-data
+  cancel-in-progress: false
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download closes from Yahoo Finance (three tries)
+        run: |
+          for i in 1 2 3; do
+            python3 market_fetch.py market-data.json && break
+            echo "Attempt $i failed; waiting before trying again"; sleep 60
+          done
+          python3 -c "import json; d=json.load(open('market-data.json')); assert d['type']=='market-data' and len(d['series'])==14; print(d['asOf'], len(d['dates']), 'days')"
+      - name: Save the file if it changed
+        run: |
+          git config user.name 'market-data bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add market-data.json
+          git diff --cached --quiet && { echo 'No change'; exit 0; }
+          git commit -m "Market data to $(python3 -c "import json; print(json.load(open('market-data.json'))['asOf'])")"
+          git push
